@@ -1,28 +1,28 @@
 """Core scoring engine: reference-free translation quality estimation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
-from lingua import Language, LanguageDetectorBuilder
-
-_LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_languages().with_low_accuracy_mode().build()
-
+from lingua import LanguageDetectorBuilder
 from sentence_transformers import SentenceTransformer
 
 _MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+_LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_languages().with_low_accuracy_mode().build()
 
 
 @dataclass
 class ScoreResult:
     """Result of scoring a translation."""
-    score: int                  # 0-100, user-facing
+
+    score: int  # 0-100, user-facing
     semantic_similarity: float  # raw cosine, 0.0-1.0
     detected_language: str | None
     target_language: str
     language_match: bool
-    confidence: str             # "high", "medium", "low"
+    confidence: str  # "high", "medium", "low"
     warnings: list[str]
 
     def to_dict(self) -> dict:
@@ -126,9 +126,7 @@ def score(source: str, translation: str, target_language: str) -> ScoreResult:
     language_match = detected == target_language.lower() if detected else True
 
     if detected and not language_match:
-        warnings.append(
-            f"Expected {target_language!r}, detected {detected!r}"
-        )
+        warnings.append(f"Expected {target_language!r}, detected {detected!r}")
 
     model = _get_model()
     embeddings = model.encode([source, translation])

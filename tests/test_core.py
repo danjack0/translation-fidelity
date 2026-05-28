@@ -1,6 +1,8 @@
 """Tests for core scoring engine."""
+
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from translation_fidelity import score
@@ -9,10 +11,9 @@ from translation_fidelity.core import (
     _cosine_similarity,
     _detect_language,
 )
-import numpy as np
-
 
 # ---------- Unit tests for helpers ----------
+
 
 class TestCosineSimilarity:
     def test_identical_vectors_score_one(self):
@@ -73,6 +74,7 @@ class TestLanguageDetection:
 
 # ---------- Integration tests for score() ----------
 
+
 class TestScore:
     def test_good_translation_scores_high(self):
         result = score("Hello, how are you?", "Ciao, come stai?", "it")
@@ -112,8 +114,13 @@ class TestScore:
         result = score("Hello", "Ciao", "it")
         d = result.to_dict()
         expected_keys = {
-            "score", "semantic_similarity", "detected_language",
-            "target_language", "language_match", "confidence", "warnings",
+            "score",
+            "semantic_similarity",
+            "detected_language",
+            "target_language",
+            "language_match",
+            "confidence",
+            "warnings",
         }
         assert set(d.keys()) == expected_keys
 
