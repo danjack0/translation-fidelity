@@ -177,3 +177,36 @@ class TestScore:
         """Score must be 0-100 for any input."""
         result = score("Hello world", "Ciao mondo", "it")
         assert 0 <= result.score <= 100
+
+
+class TestScoreBatch:
+    def test_empty_list_returns_empty(self):
+        from translation_fidelity import score_batch
+
+        assert score_batch([], "it") == []
+
+    def test_batch_length_matches_input(self):
+        from translation_fidelity import score_batch
+
+        pairs = [("Hello", "Ciao"), ("Goodbye", "Arrivederci"), ("Thanks", "Grazie")]
+        results = score_batch(pairs, "it")
+        assert len(results) == len(pairs)
+
+    def test_batch_matches_single_score(self):
+        """Batch scoring should produce the same result as individual scoring."""
+        from translation_fidelity import score, score_batch
+
+        pairs = [("I love pizza.", "Amo la pizza."), ("Good morning", "Buongiorno")]
+        batch_results = score_batch(pairs, "it")
+        single_results = [score(s, t, "it") for s, t in pairs]
+        for b, s in zip(batch_results, single_results, strict=True):
+            assert b.score == s.score
+            assert b.confidence == s.confidence
+
+    def test_batch_handles_empty_translation(self):
+        from translation_fidelity import score_batch
+
+        results = score_batch([("Hello", ""), ("Hi", "Ciao")], "it")
+        assert results[0].score == 0
+        assert "Translation is empty" in results[0].warnings
+        assert results[1].score > 0

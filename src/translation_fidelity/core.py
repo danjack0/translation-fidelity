@@ -99,22 +99,20 @@ def _calibrate_score(
     return max(0, min(100, int(round(predicted_bleu))))
 
 
-def score(source: str, translation: str, target_language: str) -> ScoreResult:
-    """
-    Score the quality of a translation against its source.
-
-    Args:
-        source: Original text
-        translation: Translated text to score
-        target_language: ISO 639-1 code of expected language (e.g. "it", "es", "fr")
-
-    Returns:
-        ScoreResult with 0-100 score and breakdown.
-    """
+def _build_result(
+    source: str,
+    translation: str,
+    src_emb: np.ndarray,
+    trans_emb: np.ndarray,
+    target_language: str,
+    family: str | None,
+) -> ScoreResult:
+    """Build a ScoreResult from pre-computed embeddings. Shared by score/score_batch."""
     warnings: list[str] = []
 
     if not source.strip():
         warnings.append("Source text is empty")
+
     if not translation.strip():
         warnings.append("Translation is empty")
         return ScoreResult(
@@ -129,21 +127,15 @@ def score(source: str, translation: str, target_language: str) -> ScoreResult:
 
     detected = _detect_language(translation)
     language_match = detected == target_language.lower() if detected else True
-
     if detected and not language_match:
         warnings.append(f"Expected {target_language!r}, detected {detected!r}")
 
-    model = _get_model()
-    embeddings = model.encode([source, translation])
-    similarity = _cosine_similarity(embeddings[0], embeddings[1])
-
-    family = get_family(target_language)
     if family is None:
         warnings.append(f"No calibration data for {target_language!r}; using global curve")
 
+    similarity = _cosine_similarity(src_emb, trans_emb)
     calibrated = _calibrate_score(similarity, language_match, family)
 
-    # Confidence: high if extremes, medium in ambiguous middle zone
     if similarity > 0.9 or similarity < 0.3:
         confidence = "high"
     elif 0.5 <= similarity <= 0.8:
@@ -160,3 +152,73 @@ def score(source: str, translation: str, target_language: str) -> ScoreResult:
         confidence=confidence,
         warnings=warnings,
     )
+
+
+def score(source: str, translation: str, target_language: str) -> ScoreResult:
+    """
+    Score the quality of a translation against its source.
+
+    Args:
+        source: Original text
+        translation: Translated text to score
+        target_language: ISO 639-1 code of expected language (e.g. "it", "es", "fr")
+
+    Returns:
+        ScoreResult with 0-100 score and breakdown.
+    """
+    # Empty translation short-circuit (avoid encoding empty string)
+    if not translation.strip():
+        return _build_result(
+            source,
+            translation,
+            np.zeros(1),
+            np.zeros(1),
+            target_language,
+            get_family(target_language),
+        )
+
+    model = _get_model()
+    embeddings = model.encode([source, translation])
+    family = get_family(target_language)
+    return _build_result(source, translation, embeddings[0], embeddings[1], target_language, family)
+
+
+def score_batch(
+    pairs: list[tuple[str, str]],
+    target_language: str,
+) -> list[ScoreResult]:
+    """
+    Score multiple translations efficiently in a single batched encoding pass.
+
+    Args:
+        pairs: List of (source, translation) tuples.
+        target_language: ISO 639-1 code, applied to all pairs.
+
+    Returns:
+        List of ScoreResult, one per input pair, in the same order.
+    """
+    if not pairs:
+        return []
+
+    family = get_family(target_language)
+
+    # Flatten to [src0, trans0, src1, trans1, ...] for one batched encode.
+    texts: list[str] = []
+    for source, translation in pairs:
+        texts.append(source)
+        texts.append(translation)
+
+    model = _get_model()
+    embeddings = model.encode(texts)
+
+    return [
+        _build_result(
+            source,
+            translation,
+            embeddings[2 * i],
+            embeddings[2 * i + 1],
+            target_language,
+            family,
+        )
+        for i, (source, translation) in enumerate(pairs)
+    ]
