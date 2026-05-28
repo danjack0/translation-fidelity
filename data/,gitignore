@@ -1,0 +1,4 @@
+# Raw benchmark data — calibration input, not shipped with package
+*.csv
+*.json
+*.gz

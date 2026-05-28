@@ -9,6 +9,11 @@ import numpy as np
 from lingua import LanguageDetectorBuilder
 from sentence_transformers import SentenceTransformer
 
+from translation_fidelity.calibration_data import (
+    FAMILY_CALIBRATION,
+    get_family,
+)
+
 _MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_languages().with_low_accuracy_mode().build()
 
@@ -63,35 +68,35 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
-def _calibrate_score(similarity: float, language_match: bool) -> int:
-    """
-    Map raw cosine similarity (0.0-1.0) to user-facing score (0-100).
+# Fallback curve when language family is unknown: average of all family curves.
+_GLOBAL_SLOPE = sum(c.slope for c in FAMILY_CALIBRATION.values()) / len(FAMILY_CALIBRATION)
+_GLOBAL_INTERCEPT = sum(c.intercept for c in FAMILY_CALIBRATION.values()) / len(FAMILY_CALIBRATION)
 
-    Based on spike data, raw similarity has a nonlinear relationship with quality:
-    - >0.95: clearly good
-    - 0.70-0.95: ambiguous (could be subtle error)
-    - <0.50: clearly bad
+
+def _calibrate_score(
+    similarity: float,
+    language_match: bool,
+    family: str | None,
+) -> int:
+    """
+    Map raw embedding similarity (0.0-1.0) to a user-facing quality score (0-100),
+    using per-language-family calibration curves fit from the benchmark.
+
+    The curve predicts expected BLEU from embedding similarity. We treat that
+    predicted BLEU as the 0-100 quality score directly.
     """
     if not language_match:
-        # Penalize wrong-language translations heavily but don't zero them
-        # (they may still be semantically correct, useful signal)
+        # Wrong-language translations: heavy soft penalty (see design note in score()).
         similarity *= 0.4
 
-    # Piecewise calibration based on spike observations
-    if similarity >= 0.95:
-        # Linear scale 95-100 across 0.95-1.0
-        score = 95 + (similarity - 0.95) * 100
-    elif similarity >= 0.70:
-        # 70-95 range maps to score 60-95
-        score = 60 + (similarity - 0.70) * 140
-    elif similarity >= 0.40:
-        # 40-70 range maps to score 20-60
-        score = 20 + (similarity - 0.40) * 133
+    if family and family in FAMILY_CALIBRATION:
+        curve = FAMILY_CALIBRATION[family]
+        slope, intercept = curve.slope, curve.intercept
     else:
-        # <0.40 maps to 0-20
-        score = max(0, similarity * 50)
+        slope, intercept = _GLOBAL_SLOPE, _GLOBAL_INTERCEPT
 
-    return max(0, min(100, int(round(score))))
+    predicted_bleu = slope * similarity + intercept
+    return max(0, min(100, int(round(predicted_bleu))))
 
 
 def score(source: str, translation: str, target_language: str) -> ScoreResult:
@@ -132,7 +137,11 @@ def score(source: str, translation: str, target_language: str) -> ScoreResult:
     embeddings = model.encode([source, translation])
     similarity = _cosine_similarity(embeddings[0], embeddings[1])
 
-    calibrated = _calibrate_score(similarity, language_match)
+    family = get_family(target_language)
+    if family is None:
+        warnings.append(f"No calibration data for {target_language!r}; using global curve")
+
+    calibrated = _calibrate_score(similarity, language_match, family)
 
     # Confidence: high if extremes, medium in ambiguous middle zone
     if similarity > 0.9 or similarity < 0.3:
